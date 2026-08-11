@@ -8,6 +8,7 @@ import (
 
 	"github.com/1239t/vohive/pkg/smscodec"
 	"github.com/1239t/vowifi-go/runtimehost"
+	"github.com/1239t/vowifi-go/runtimehost/eventhost"
 	"github.com/1239t/vowifi-go/runtimehost/messaging"
 )
 
@@ -106,10 +107,28 @@ func (p *Pool) SendVoWiFiSMSWithOptions(ctx context.Context, deviceID, to, text 
 		parts = append(parts, messaging.SMSPart{
 			RPMR: mr,
 			Body: smscodec.BuildRPData(mr, tpdu, smsc),
+			SMSC: smsc,
 		})
 	}
 
-	return svc.SendSMS(ctx, to, text, parts)
+	outcome, err := svc.SendSMS(ctx, to, text, parts)
+	if err != nil {
+		return outcome, err
+	}
+
+	// 出站短信入库只能在这里做：API 层的 VoWiFi 分支刻意不调 SaveSMS，改为等一条
+	// eventhost.SMSSent —— 但 vowifi-go 从来没有发过这个事件（SendSMS 只返回
+	// SendOutcome），于是发送成功的短信在历史里根本不存在，前端只看得到收到的。
+	// 事件在这里补发，而不是在 vowifi-go 里 emit：TargetURI 要的是收件人号码，
+	// 而引擎侧的 Request-URI 是 SMSC，两者不是一回事。
+	poolVoWiFiRuntimeDispatcher{pool: p}.Dispatch(ctx, eventhost.SMSSent{
+		DevID:      deviceID,
+		TargetURI:  to,
+		Content:    text,
+		Time:       time.Now(),
+		TotalParts: outcome.PartsTotal,
+	})
+	return outcome, nil
 }
 
 func (p *Pool) IsVoWiFiActive(deviceID string) bool {

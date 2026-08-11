@@ -8,6 +8,7 @@ import (
 	"time"
 
 	innersim "github.com/1239t/vohive/internal/sim"
+	"github.com/1239t/vohive/pkg/logger"
 	swusim "github.com/1239t/vowifi-go/engine/sim"
 	"github.com/1239t/vowifi-go/runtimehost"
 	"github.com/1239t/vowifi-go/runtimehost/eventhost"
@@ -115,6 +116,7 @@ type RuntimeStartRequest struct {
 	Dataplane     runtimehost.DataplanePolicy
 	VoiceGateway  *voicehost.Gateway
 	DeliveryStore messaging.DeliveryStore
+	InboundSMS    messaging.InboundSMSHandler
 	Dispatch      eventhost.Dispatcher
 	BeforeStart   func(context.Context, runtimehost.SessionConfig) error
 }
@@ -165,25 +167,26 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 	}
 
 	inst, err := m.runtimeStarter()(ctx, runtimehost.StartRequest{
-		Mode:          runtimehost.StartModeMain,
-		DeviceID:      deviceID,
-		TraceID:       traceID,
-		Profile:       profile,
-		Prepared:      &prepared,
-		NetworkMode:   networkMode,
-		VoiceGateway:  req.VoiceGateway,
-		SIM:           buildVoWiFiSIMAdapter(req.Prepared.SIM, req.Modem, prepared.Profile.IMSI),
-		Access:        runtimehost.NewModemAccessAdapter(req.Modem),
-		Dataplane:     req.Dataplane,
-		Proxy:         req.Prepared.Proxy,
+		Mode:            runtimehost.StartModeMain,
+		DeviceID:        deviceID,
+		TraceID:         traceID,
+		Profile:         profile,
+		Prepared:        &prepared,
+		NetworkMode:     networkMode,
+		VoiceGateway:    req.VoiceGateway,
+		SIM:             buildVoWiFiSIMAdapter(req.Prepared.SIM, req.Modem, prepared.Profile.IMSI),
+		Access:          runtimehost.NewModemAccessAdapter(req.Modem),
+		Dataplane:       req.Dataplane,
+		Proxy:           req.Prepared.Proxy,
 		PCSCFAddr:       req.Prepared.PCSCFAddr,
 		CellID:          req.Prepared.CellID,
 		RegisterProfile: req.Prepared.RegisterProfile,
 		SIPInstanceURN:  req.Prepared.SIPInstanceURN,
 		RegisterExpiry:  req.Prepared.RegisterExpiry,
 		DeliveryStore:   req.DeliveryStore,
-		Dispatch:      req.Dispatch,
-		BeforeStart:   req.BeforeStart,
+		InboundSMS:      req.InboundSMS,
+		Dispatch:        req.Dispatch,
+		BeforeStart:     req.BeforeStart,
 		ShouldRun: func() bool {
 			return ctx.Err() == nil && m.ShouldRun(deviceID, req.Epoch)
 		},
@@ -195,6 +198,7 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 	inst.AddObserver(runtimehost.ObserverFunc(func(_ context.Context, ev runtimehost.Event) {
 		if m.IsCurrentInstance(deviceID, inst) {
 			m.BroadcastState(deviceID)
+			m.handleTransportDead(deviceID, inst, ev.State)
 			return
 		}
 		m.RecordStartupState(deviceID, ev.State)
@@ -209,4 +213,24 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 	}
 
 	return RuntimeStartResult{Instance: inst}, nil
+}
+
+// handleTransportDead 收到 runtimehost 的传输已死通知后拉一次重启。
+//
+// 走 Restart（拆 + 重建）而不是 Recover：Recover 开头就 `if m.Active(deviceID)
+// { return }`，而 Store.Active 只判断实例对象存不存在——隧道死了实例还在，
+// 于是 Recover 会原地跳过，什么也不做。
+//
+// 不需要防抖：runtimehost 侧的上报是 sync.Once 语义，一个 runtime 只会来一次；
+// 而 Restart 提交进 lifecycle 队列本身就是串行的。
+func (m *Manager) handleTransportDead(deviceID string, inst *runtimehost.Instance, state runtimehost.State) {
+	if m == nil || state.LastErrorClass != runtimehost.ErrorClassTransportDead {
+		return
+	}
+	logger.Warn("VoWiFi 传输已断开，自动重建隧道", "device", deviceID, "err", state.LastError, "reason", state.LastReason)
+	go func() {
+		if err := m.Restart(context.Background(), deviceID); err != nil {
+			logger.Warn("VoWiFi 传输断开后自动重建失败", "device", deviceID, "err", err)
+		}
+	}()
 }

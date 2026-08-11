@@ -10,15 +10,16 @@ import (
 )
 
 type Manager struct {
-	runtimeStore RuntimeStore
-	stateHub     *StateHub
-	recoverStore *DesiredRecoverStore
-	lifecycle    *LifecycleController
+	runtimeStore  RuntimeStore
+	stateHub      *StateHub
+	recoverStore  *DesiredRecoverStore
+	lifecycle     *LifecycleController
 	runtimeStart  runtimeStartFunc
 	adapter       Adapter
 	voiceGateway  *voicehost.Gateway
 	deliveryStore messaging.DeliveryStore
 	dispatcher    eventhost.Dispatcher
+	inboundSMS    messaging.InboundSMSHandler
 }
 
 func NewManager() *Manager {
@@ -72,13 +73,14 @@ func (m *Manager) ClearStartupState(deviceID string) bool {
 	return m.RuntimeStore().ClearStartupState(deviceID)
 }
 
-func (m *Manager) ConfigureRuntimeDependencies(vg *voicehost.Gateway, ds messaging.DeliveryStore, ed eventhost.Dispatcher) {
+func (m *Manager) ConfigureRuntimeDependencies(vg *voicehost.Gateway, ds messaging.DeliveryStore, ed eventhost.Dispatcher, in messaging.InboundSMSHandler) {
 	if m == nil {
 		return
 	}
 	m.voiceGateway = vg
 	m.deliveryStore = ds
 	m.dispatcher = ed
+	m.inboundSMS = in
 }
 
 func (m *Manager) ClearStartupStateAndBroadcast(deviceID string) {

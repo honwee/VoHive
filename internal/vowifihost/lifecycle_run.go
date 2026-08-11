@@ -115,6 +115,7 @@ func (m *Manager) enableRuntime(ctx context.Context, req runtimeEnableRequest) (
 		Dataplane:     runtimehost.DataplanePolicy{Mode: swu.DataplaneModeUserspace},
 		DeliveryStore: m.deliveryStore,
 		Dispatch:      m.dispatcher,
+		InboundSMS:    m.inboundSMS,
 		BeforeStart:   m.BeforeStart(deviceID, modemIface, preparedStart.Proxy),
 	})
 	if err != nil {

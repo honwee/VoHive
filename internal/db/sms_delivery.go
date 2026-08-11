@@ -134,16 +134,29 @@ func UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int
 		CreatedAt: sentAt,
 		UpdatedAt: sentAt,
 	}
-	return DB.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "message_id"}, {Name: "part_no"}},
-		DoUpdates: clause.Assignments(map[string]any{
-			"call_id":    part.CallID,
-			"rp_mr":      part.RPMR,
-			"state":      part.State,
-			"sent_at":    part.SentAt,
-			"updated_at": sentAt,
-		}),
-	}).Create(&part).Error
+	// 不能用 ON CONFLICT(message_id, part_no):idx_sms_delivery_part_mid_no 是
+	// 普通索引而非唯一索引,SQLite 会直接报 "ON CONFLICT clause does not match
+	// any PRIMARY KEY or UNIQUE constraint"。既有库里该索引已经建成非唯一,
+	// 改 gorm tag 也不会被 AutoMigrate 升级,因此在事务里自己查改/新建。
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var existing SMSDeliveryPart
+		err := tx.Where("message_id = ? AND part_no = ?", messageID, partNo).
+			Take(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tx.Create(&part).Error
+		}
+		if err != nil {
+			return err
+		}
+		return tx.Model(&SMSDeliveryPart{}).Where("id = ?", existing.ID).
+			Updates(map[string]any{
+				"call_id":    part.CallID,
+				"rp_mr":      part.RPMR,
+				"state":      part.State,
+				"sent_at":    part.SentAt,
+				"updated_at": sentAt,
+			}).Error
+	})
 }
 
 func MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID string, rpMR int, state string, sipCode int, rpCause int, errText string, at time.Time) (SMSDeliveryPart, error) {

@@ -1,5 +1,7 @@
 module github.com/1239t/vohive
 
+replace github.com/1239t/vowifi-go => ../vowifi-go-source
+
 go 1.26.3
 
 require (
