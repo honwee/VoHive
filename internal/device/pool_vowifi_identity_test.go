@@ -27,7 +27,7 @@ func (m vowifiIdentityTestModem) OpenLogicalChannel(string) (int, error) { retur
 func (m vowifiIdentityTestModem) ResolveLogicalChannelAID(app string, fallbackAID string) (string, string, error) {
 	return fallbackAID, "", nil
 }
-func (m vowifiIdentityTestModem) CloseLogicalChannel(int) error { return nil }
+func (m vowifiIdentityTestModem) CloseLogicalChannel(int) error            { return nil }
 func (m vowifiIdentityTestModem) TransmitAPDU(int, string) (string, error) { return "", nil }
 func (m vowifiIdentityTestModem) Stop()                                    {}
 func (m vowifiIdentityTestModem) GetISIMIdentity() (identity.Identity, error) {

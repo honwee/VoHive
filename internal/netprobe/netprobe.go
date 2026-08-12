@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/1239t/vohive/internal/netbind"
 )
 
 type Family int
@@ -131,15 +132,9 @@ func (p *Prober) boundDialer() *net.Dialer {
 	if strings.TrimSpace(p.cfg.Interface) == "" {
 		return d
 	}
-	d.Control = func(_, _ string, c syscall.RawConn) error {
-		var serr error
-		if err := c.Control(func(fd uintptr) {
-			serr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, p.cfg.Interface)
-		}); err != nil {
-			return err
-		}
-		return serr
-	}
+	// 绑定到指定网卡。SO_BINDTODEVICE 是 Linux 专属，darwin 的对应物是 IP_BOUND_IF
+	// 且要接口索引而非名字——差异收在 internal/netbind 里。
+	d.Control = netbind.Control(p.cfg.Interface)
 	return d
 }
 

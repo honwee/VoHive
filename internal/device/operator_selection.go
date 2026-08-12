@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 	"github.com/1239t/vohive/internal/backend"
+	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 )
 
 var (

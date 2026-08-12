@@ -107,3 +107,8 @@ require (
 )
 
 replace github.com/emiago/sipgo => ./third_party/sipgo
+
+// swu-go 是外部模块且没有源码仓库可以提 PR，而它的 pkg/ipsec 里有一段 Linux 专属的
+// PMTU 探测（MSG_ERRQUEUE / IP_RECVERR）挡住 darwin 编译。vendor 一份就地打 build tag，
+// 与上面 sipgo 的处理方式一致。
+replace github.com/1239t/swu-go => ./third_party/swu-go

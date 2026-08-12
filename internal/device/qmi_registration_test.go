@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
-	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
 	"github.com/1239t/vohive/internal/backend"
 	"github.com/1239t/vohive/internal/config"
+	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
+	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 )
 
 type qmiRegistrationTestController struct {

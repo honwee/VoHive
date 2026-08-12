@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 	"github.com/1239t/vohive/internal/backend"
 	"github.com/1239t/vohive/internal/config"
 	"github.com/1239t/vohive/internal/modem"
@@ -16,6 +15,7 @@ import (
 	"github.com/1239t/vohive/internal/vowifihost"
 	"github.com/1239t/vowifi-go/runtimehost"
 	"github.com/1239t/vowifi-go/runtimehost/identity"
+	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 )
 
 type workerStatusBackendStub struct {

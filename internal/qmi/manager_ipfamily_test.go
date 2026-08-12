@@ -3,8 +3,8 @@ package qmicore
 import (
 	"testing"
 
-	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
 	"github.com/1239t/vohive/internal/config"
+	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
 )
 
 func TestBuildQMIManagerConfigIPFamily(t *testing.T) {

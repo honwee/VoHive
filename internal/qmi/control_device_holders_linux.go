@@ -9,29 +9,6 @@ import (
 	"syscall"
 )
 
-type qmiControlDeviceHolder struct {
-	PID     int
-	Command string
-}
-
-type qmiControlDeviceHolders struct {
-	Holders []qmiControlDeviceHolder
-	Unknown bool
-}
-
-func (h qmiControlDeviceHolders) onlyQMIProxy() bool {
-	if len(h.Holders) == 0 {
-		return false
-	}
-	for _, holder := range h.Holders {
-		cmd := strings.ToLower(strings.TrimSpace(holder.Command))
-		if !strings.Contains(cmd, "qmi-proxy") {
-			return false
-		}
-	}
-	return true
-}
-
 var detectQMIControlDeviceHolders = detectQMIControlDeviceHoldersLinux
 
 func detectQMIControlDeviceHoldersLinux(controlDevice string) (qmiControlDeviceHolders, error) {

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	qmiq "github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 	"github.com/1239t/vohive/internal/config"
+	qmiq "github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 )
 
 func TestEnrichDiscoveredQMIDeviceHonorsQMIIMEIProbeFlag(t *testing.T) {

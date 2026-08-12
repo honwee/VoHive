@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/1239t/vohive/internal/netbind"
 	"github.com/1239t/vohive/pkg/logger"
 	socks5 "github.com/things-go/go-socks5"
 )
@@ -116,19 +117,16 @@ func newBoundDialer(id, iface string) *net.Dialer {
 	iface = strings.TrimSpace(iface)
 	return &net.Dialer{
 		Timeout: 30 * time.Second,
+		// 绑定到指定网卡。平台差异（Linux 的 SO_BINDTODEVICE vs darwin 的
+		// IP_BOUND_IF）收在 internal/netbind 里。
 		Control: func(network, address string, c syscall.RawConn) error {
-			if iface == "" {
+			ctrl := netbind.Control(iface)
+			if ctrl == nil {
 				return nil
 			}
-			var sockErr error
-			if err := c.Control(func(fd uintptr) {
-				sockErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, iface)
-			}); err != nil {
+			if err := ctrl(network, address, c); err != nil {
+				logger.Error(fmt.Sprintf("[%s] 绑定设备失败", id), "iface", iface, "err", err)
 				return err
-			}
-			if sockErr != nil {
-				logger.Error(fmt.Sprintf("[%s] 绑定设备失败", id), "iface", iface, "err", sockErr)
-				return fmt.Errorf("SO_BINDTODEVICE(%s) 失败: %w", iface, sockErr)
 			}
 			return nil
 		},

@@ -7,12 +7,12 @@ import (
 	"net"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"github.com/1239t/vohive/internal/apduarbiter"
 	"github.com/1239t/vohive/internal/config"
+	"github.com/1239t/vohive/internal/netbind"
 	"github.com/1239t/vohive/internal/netprobe"
 	"github.com/1239t/vohive/pkg/logger"
 
@@ -1097,15 +1097,8 @@ func (m *Manager) boundDialer(timeout time.Duration) *net.Dialer {
 	if strings.TrimSpace(m.cfg.Interface) == "" {
 		return dialer
 	}
-	dialer.Control = func(network, address string, c syscall.RawConn) error {
-		var sockErr error
-		if err := c.Control(func(fd uintptr) {
-			sockErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, m.cfg.Interface)
-		}); err != nil {
-			return err
-		}
-		return sockErr
-	}
+	// 平台差异收在 internal/netbind：Linux 用 SO_BINDTODEVICE，darwin 用 IP_BOUND_IF。
+	dialer.Control = netbind.Control(m.cfg.Interface)
 	return dialer
 }
 
