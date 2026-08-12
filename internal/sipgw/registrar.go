@@ -1011,8 +1011,8 @@ func (r *Registrar) handleAck(req *sip.Request, tx sip.ServerTransaction) {
 	if from == nil {
 		return
 	}
-	username := from.Address.User
-	user := r.GetUserByUsername(username)
+	// 对话内请求：From 只对客户端发起的通话才是注册用户，见 resolveDialogUser。
+	user := r.resolveDialogUser(req)
 	if user == nil {
 		return
 	}
@@ -1063,10 +1063,30 @@ func (r *Registrar) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 	r.respond(tx, req, 200, "OK")
 
 	// 通知 Gateway → Agent → 转发 BYE 到 IMS
-	user := r.GetUserByUsername(username)
+	user := r.resolveDialogUser(req)
 	if r.onBye != nil && user != nil {
 		go r.onBye(user.DeviceID, req, tx)
 	}
+}
+
+// resolveDialogUser 找出这条对话属于哪个注册用户。
+//
+// 只查 From 是不够的：那只对**客户端发起**的通话成立。对我们主动呼向软电话的来话腿，
+// From 是主叫号码（那是要显示在软电话屏幕上的东西），注册用户名在 To 里。此前只查
+// From，于是来话的 BYE 查不到用户、onBye 不触发，IMS 那条腿一直泄漏到网络超时——
+// 主叫侧听到的是通话没挂断。
+func (r *Registrar) resolveDialogUser(req *sip.Request) *RegisteredUser {
+	if from := req.From(); from != nil {
+		if u := r.GetUserByUsername(from.Address.User); u != nil {
+			return u
+		}
+	}
+	if to := req.To(); to != nil {
+		if u := r.GetUserByUsername(to.Address.User); u != nil {
+			return u
+		}
+	}
+	return nil
 }
 
 // handleCancel 处理 CANCEL 请求
@@ -1084,7 +1104,8 @@ func (r *Registrar) handleCancel(req *sip.Request, tx sip.ServerTransaction) {
 	onCancel := r.onCancel
 	r.mu.RUnlock()
 
-	user := r.GetUserByUsername(username)
+	// 对话内请求：From 只对客户端发起的通话才是注册用户，见 resolveDialogUser。
+	user := r.resolveDialogUser(req)
 	if onCancel != nil && user != nil {
 		go onCancel(user.DeviceID, req, tx)
 	} else {
@@ -1102,14 +1123,15 @@ func (r *Registrar) SetOnPrack(handler func(deviceID string, req *sip.Request, t
 
 // handlePrack 处理 PRACK 请求
 func (r *Registrar) handlePrack(req *sip.Request, tx sip.ServerTransaction) {
-	username := extractUsername(req.From())
+	// From 仅用于日志；用户查找见 resolveDialogUser
 	// logger.Debug("收到 PRACK 请求", "username", username, "call_id", req.CallID().Value())
 
 	r.mu.RLock()
 	handler := r.onPrack
 	r.mu.RUnlock()
 
-	user := r.GetUserByUsername(username)
+	// 对话内请求：From 只对客户端发起的通话才是注册用户，见 resolveDialogUser。
+	user := r.resolveDialogUser(req)
 	if handler != nil && user != nil {
 		go handler(user.DeviceID, req, tx)
 	} else {
