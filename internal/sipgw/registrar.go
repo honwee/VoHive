@@ -82,6 +82,8 @@ type Registrar struct {
 	// 并发控制信号量
 	concurrencySem chan struct{}
 
+	bindingStore BindingStore
+
 	pushAuthCache map[string]string
 	pushAuthNC    uint32
 	pushAuthMu    sync.Mutex
@@ -234,6 +236,9 @@ func (r *Registrar) Start(ctx context.Context) error {
 			}
 		}
 	}()
+
+	// 先恢复绑定再开始服务：监听已经起来了，此刻可能已有来话在路上。
+	r.restoreBindings()
 
 	// 定期清理过期注册
 	go r.cleanupLoop()
@@ -502,7 +507,6 @@ func (r *Registrar) parseExpires(req *sip.Request) int {
 // registerUser 注册用户
 func (r *Registrar) registerUser(username, deviceID, displayName, contactURI string, contactAddr *net.UDPAddr, transport string, userAgent string, expires int, pushT, pushPv, pushPa, pushCs, pushMs string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	user := &RegisteredUser{
 		Username:     username,
@@ -534,6 +538,11 @@ func (r *Registrar) registerUser(username, deviceID, displayName, contactURI str
 		}
 		r.onlineSignals[deviceID] = make(chan struct{})
 	}
+	r.mu.Unlock()
+
+	// 落盘在锁外：存储是 IO，持有 registrar 的写锁去做它会挡住所有并发的 REGISTER
+	// 与来话查找。绑定此刻已经在内存表里生效，落盘失败只影响下次重启后的恢复。
+	r.persistBinding(user)
 }
 
 // unregisterUser 注销用户
@@ -645,6 +654,7 @@ func (r *Registrar) cleanupLoop() {
 			return
 		case <-ticker.C:
 			r.cleanup()
+			r.purgePersistedBindings(time.Now())
 		}
 	}
 }

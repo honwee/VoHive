@@ -271,6 +271,10 @@ func main() {
 			if err != nil {
 				logger.Error("Registrar 初始化失败", "err", err)
 			} else {
+				// 注册绑定落盘。registrar 的表是内存态，vohive 一重启就空，而软电话
+				// 的 expires 通常是 600s——这中间所有来话都会以"软电话未注册"失败，
+				// 且软电话侧显示"已注册"，无从察觉。
+				sipRegistrar.SetBindingStore(sipgw.DBBindingStore{})
 				voiceGW.SetClientAdapter(sipRegistrar)
 				// Media on the softphone side binds here. Without it the relay
 				// binds the wildcard address and the SDP we hand Linphone names
