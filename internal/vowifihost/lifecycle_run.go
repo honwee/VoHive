@@ -73,7 +73,24 @@ func (m *Manager) enableRuntime(ctx context.Context, req runtimeEnableRequest) (
 
 	traceID := runtimehost.NewTraceID()
 	baseCtx := hostContext(ctx, adapter)
-	startCtx := runtimehost.WithTraceID(baseCtx, traceID)
+	// The runtime outlives this call. enableRuntime returns as soon as the start
+	// is accepted -- the tunnel and IMS registration are built by an async staged
+	// pipeline -- so a context that dies with the caller kills the very thing it
+	// just started.
+	//
+	// This was not hypothetical: handleTransportDead bounded its Restart with a
+	// 3-minute WithTimeout and called cancel() the moment Restart returned. The
+	// pipeline inherited that context, saw ctx.Err() != nil in its first
+	// ShouldRun check, and aborted with "start_canceled" before touching the
+	// tunnel -- so self-heal reported success while leaving VoWiFi down. Even
+	// without the explicit cancel, the 3-minute deadline would later have killed
+	// a session that was already healthy.
+	//
+	// Cancellation of a *running* runtime belongs to teardown, which stops the
+	// instance explicitly; it is not something a start caller should be able to
+	// do by returning. Same principle as the IMS session's own context, which is
+	// deliberately not derived from the staged pipeline that starts it.
+	startCtx := runtimehost.WithTraceID(context.WithoutCancel(baseCtx), traceID)
 	startedAt := time.Now()
 
 	startClaim := m.BeginStart(deviceID)
