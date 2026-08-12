@@ -62,6 +62,20 @@ func (p *Pool) SendVoWiFiSMS(ctx context.Context, deviceID, to, text string) err
 	return err
 }
 
+// SimulateVoWiFiCall places a signalling-only outbound call over VoWiFi.
+//
+// It answers the one question terminating-call tests cannot: whether the network
+// accepts an originating INVITE from this registration at all. Media points at a
+// black hole on purpose -- a call that reaches 180/200 has proved the carrier
+// routes IMS voice for this line, and a 403/603/404 has proved it does not.
+func (p *Pool) SimulateVoWiFiCall(ctx context.Context, deviceID, callee string, hold time.Duration) (string, int, error) {
+	inst := p.voWiFiHost().Instance(deviceID)
+	if inst == nil {
+		return "", 0, fmt.Errorf("设备 %s 的 VoWiFi 未启动", deviceID)
+	}
+	return inst.SimulateCall(ctx, callee, hold)
+}
+
 func (p *Pool) SendVoWiFiSMSWithResult(ctx context.Context, deviceID, to, text string) (messaging.SendOutcome, error) {
 	return p.SendVoWiFiSMSWithOptions(ctx, deviceID, to, text, smscodec.SubmitOptions{})
 }

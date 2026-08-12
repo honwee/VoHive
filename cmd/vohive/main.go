@@ -271,7 +271,20 @@ func main() {
 			} else {
 				voiceGW.SetClientAdapter(sipRegistrar)
 
-				sipRegistrar.SetOnInvite(voiceGW.HandleClientInvite)
+				// 出呼优先走 VoWiFi；没有 IMS 腿时回退到 CS 域桥接。
+				// 这个分支原本长在 pool.SetSIPRegistrar 里，会在这之后把这里
+				// 装好的回调整套覆盖掉（连 OnPrack/OnAck 一起丢），所以搬过来。
+				sipRegistrar.SetOnInvite(func(deviceID string, req *sip.Request, tx sip.ServerTransaction) {
+					if voiceGW.GetAgent(deviceID) != nil {
+						voiceGW.HandleClientInvite(deviceID, req, tx)
+						return
+					}
+					if w := pool.GetWorker(deviceID); w != nil && w.CSCallMgr != nil {
+						w.CSCallMgr.HandleOutboundInvite(deviceID, req, tx)
+						return
+					}
+					tx.Respond(sip.NewResponseFromRequest(req, 404, "Not Found", nil))
+				})
 				sipRegistrar.SetOnCancel(func(deviceID string, req *sip.Request, tx sip.ServerTransaction) {
 					callID := req.CallID().Value()
 					if w := pool.GetWorker(deviceID); w != nil && w.CSCallMgr != nil && w.CSCallMgr.HasCall(callID) {
@@ -309,7 +322,11 @@ func main() {
 			logger.Warn("通知管理器初始化异常", "err", err)
 		} else {
 			pool.SetNotifier(notifyMgr)
-			voiceGW.SetNotifier(notifyMgr)
+			// 语音事件走已有的通知管理器。voicehost 不认识 notify.Manager
+			// （它不能 import vohive），所以适配在这里做。
+			voiceGW.SetNotifier(voicehost.NotifierFunc(func(deviceID, event, detail string) {
+				notifyMgr.NotifyRaw(fmt.Sprintf("VoWiFi 通话 / %s\n设备    %s\n对端    %s", event, deviceID, detail))
+			}))
 		}
 
 	}
@@ -343,7 +360,9 @@ func main() {
 		} else {
 			pool.SetNotifier(notifyMgr)
 			if voiceGW != nil {
-				voiceGW.SetNotifier(notifyMgr)
+				voiceGW.SetNotifier(voicehost.NotifierFunc(func(deviceID, event, detail string) {
+					notifyMgr.NotifyRaw(fmt.Sprintf("VoWiFi 通话 / %s\n设备    %s\n对端    %s", event, deviceID, detail))
+				}))
 			}
 		}
 	}

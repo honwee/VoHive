@@ -49,7 +49,12 @@ func (h vowifiInboundSMS) HandleInboundSMS(ctx context.Context, deviceID string,
 	if concat.IsConcat {
 		complete, full := vowifiInboundReassembler.Add(sender, concat, content)
 		if !complete {
-			logger.Debug("VoWiFi 收到长短信分片，等待后续", "device", deviceID,
+			// Info, not Debug: an incomplete fragment is indistinguishable from
+			// "nothing arrived" at the app layer, and that is exactly the state a
+			// failing RP-ACK produces -- the SC keeps resending the same part
+			// forever and the message never assembles. Without this line the
+			// symptom is a silent missing SMS.
+			logger.Info("VoWiFi 收到长短信分片，等待后续", "device", deviceID,
 				"ref", concat.Ref, "seq", concat.Seq, "total", concat.Total)
 			return ack, nil
 		}
@@ -59,6 +64,7 @@ func (h vowifiInboundSMS) HandleInboundSMS(ctx context.Context, deviceID string,
 	vowifiInboundReassembler.Cleanup(10 * time.Minute)
 
 	if strings.TrimSpace(content) == "" {
+		logger.Info("VoWiFi 收到空短信，未入库", "device", deviceID, "sender", sender)
 		return ack, nil
 	}
 

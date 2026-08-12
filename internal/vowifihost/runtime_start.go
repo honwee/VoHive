@@ -18,6 +18,14 @@ import (
 
 type runtimeStartFunc func(context.Context, runtimehost.StartRequest) (*runtimehost.Instance, error)
 
+const (
+	// 重建一条隧道要重走 IKE/EAP-AKA 加 REGISTER，实测 30-60 秒；封顶给足余量，
+	// 但必须有顶——拆除阶段会碰模组，那条路自己没有超时。
+	transportDeadRestartTimeout  = 3 * time.Minute
+	transportDeadRestartAttempts = 3
+	transportDeadRestartBackoff  = 15 * time.Second
+)
+
 type missingSIMProvider struct{}
 
 func (m missingSIMProvider) GetIMSI() (string, error) {
@@ -221,16 +229,29 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 // { return }`，而 Store.Active 只判断实例对象存不存在——隧道死了实例还在，
 // 于是 Recover 会原地跳过，什么也不做。
 //
-// 不需要防抖：runtimehost 侧的上报是 sync.Once 语义，一个 runtime 只会来一次；
-// 而 Restart 提交进 lifecycle 队列本身就是串行的。
+// 重启必须有超时和重试。第一次实测触发自愈时，拆除阶段卡住了（拆隧道要碰模组，
+// 那条路没有任何超时），而当时传的是 context.Background()，于是整个自愈永久挂死：
+// 隧道拆掉了、没重建、上报是 sync.Once 不会再来第二次，VoWiFi 就这么断了十个小时。
+// 一次失败的自愈比不自愈更糟，所以这里既封顶也重试。
 func (m *Manager) handleTransportDead(deviceID string, inst *runtimehost.Instance, state runtimehost.State) {
 	if m == nil || state.LastErrorClass != runtimehost.ErrorClassTransportDead {
 		return
 	}
 	logger.Warn("VoWiFi 传输已断开，自动重建隧道", "device", deviceID, "err", state.LastError, "reason", state.LastReason)
 	go func() {
-		if err := m.Restart(context.Background(), deviceID); err != nil {
-			logger.Warn("VoWiFi 传输断开后自动重建失败", "device", deviceID, "err", err)
+		for attempt := 1; attempt <= transportDeadRestartAttempts; attempt++ {
+			ctx, cancel := context.WithTimeout(context.Background(), transportDeadRestartTimeout)
+			err := m.Restart(ctx, deviceID)
+			cancel()
+			if err == nil {
+				logger.Info("VoWiFi 传输断开后已重建", "device", deviceID, "attempt", attempt)
+				return
+			}
+			logger.Warn("VoWiFi 传输断开后自动重建失败", "device", deviceID, "attempt", attempt, "err", err)
+			if attempt < transportDeadRestartAttempts {
+				time.Sleep(transportDeadRestartBackoff)
+			}
 		}
+		logger.Error("VoWiFi 传输断开后多次重建均失败，隧道保持断开", "device", deviceID)
 	}()
 }

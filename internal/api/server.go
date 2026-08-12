@@ -322,7 +322,9 @@ func (s *Server) newRouter() *gin.Engine {
 		api.PATCH("/devices/:device_id/vowifi", s.handleDeviceVoWiFiPatch)                          // 启用/禁用 VoWiFi
 		api.POST("/devices/:device_id/vowifi/actions/reconnect", s.handleDeviceMgmtReconnectVoWiFi) // 重连 VoWiFi
 		api.POST("/devices/:device_id/vowifi/e911/websheet", s.handleDeviceE911Websheet)            // 打开 E911 设置 websheet
-		// api.POST("/devices/:id/simulate-call", s.handleSimulateCall)   // 模拟呼叫
+		// 只走信令的试拨。路由原本被注释掉且写作 :id —— 与同段其它路由的
+		// :device_id 冲突，gin 会在启动时 panic，这多半就是它被注释掉的原因。
+		api.POST("/devices/:device_id/vowifi/actions/simulate-call", s.handleSimulateCall)
 
 		// ===== 日志 =====
 		api.GET("/logs/stream", s.handleLogStream)   // SSE 实时日志流
@@ -1330,30 +1332,50 @@ func (s *Server) handleVoWiFiDisable(c *gin.Context) {
 	})
 }
 
-// handleSimulateCall 处理无头模拟呼叫请求
+// handleSimulateCall 发起一次只走信令的 VoWiFi 呼叫。
+//
+// 它不经过 voiceGW：那条路是给软电话桥接用的，而这里要验证的是更底层的问题——
+// 网络到底接不接受这个注册发出的 INVITE。媒体故意指向黑洞。
 func (s *Server) handleSimulateCall(c *gin.Context) {
 	deviceID := deviceIDParam(c)
-	if s.voiceGW == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "语音网关未启用"})
-		return
+	var req struct {
+		Callee      string `json:"callee"`
+		HoldSeconds int    `json:"hold_seconds"`
 	}
-
-	var req voicehost.SimulateCallRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数：" + err.Error()})
 		return
 	}
+	if strings.TrimSpace(req.Callee) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "callee 不能为空"})
+		return
+	}
+	hold := time.Duration(req.HoldSeconds) * time.Second
+	if req.HoldSeconds <= 0 {
+		hold = time.Duration(voicehost.DefaultSimulateCallHoldSeconds) * time.Second
+	}
+	if req.HoldSeconds > voicehost.MaxSimulateCallHoldSeconds {
+		hold = time.Duration(voicehost.MaxSimulateCallHoldSeconds) * time.Second
+	}
 
-	result, err := s.voiceGW.SimulateCall(c.Request.Context(), deviceID, req)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), hold+90*time.Second)
+	defer cancel()
+
+	state, code, err := s.pool.SimulateVoWiFiCall(ctx, deviceID, strings.TrimSpace(req.Callee), hold)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   err.Error(),
+			"state":   state,
+			"code":    code,
 			"success": false,
 		})
 		return
 	}
-
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, gin.H{
+		"success": state == "answered" || state == "ended",
+		"state":   state,
+		"code":    code,
+	})
 }
 
 // handleVoWiFiStatus 返回 VoWiFi 当前状态

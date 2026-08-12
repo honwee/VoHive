@@ -17,7 +17,24 @@ import (
 	"github.com/1239t/vowifi-go/runtimehost"
 	"github.com/1239t/vowifi-go/runtimehost/carrier"
 	"github.com/1239t/vowifi-go/runtimehost/identity"
+	"github.com/1239t/vowifi-go/runtimehost/voiceclient"
 )
+
+// sipInstanceKind says what shape the instance id ended up with without putting
+// the identifier itself in the log: the IMEI is exactly the sort of value that
+// must not appear there.
+func sipInstanceKind(urn string) string {
+	switch {
+	case strings.HasPrefix(urn, "urn:gsma:imei:"):
+		return "imei"
+	case strings.HasPrefix(urn, "urn:uuid:"):
+		return "uuid"
+	case strings.TrimSpace(urn) == "":
+		return "none"
+	default:
+		return "other"
+	}
+}
 
 type voWiFiStartContext struct {
 	worker *Worker
@@ -269,12 +286,23 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		startCtx.RegisterProfile = regOpts.Profile
 		startCtx.SIPInstanceURN = regOpts.SIPInstanceURN
 		startCtx.RegisterExpiry = regOpts.RegisterExpiry
+		// A preset only carries a PhoneIMEI when it is impersonating a specific
+		// handset; most, including CTEUK, do not. Without one the instance id fell
+		// back to a random urn:uuid that changes on every start -- and IR.92 §2.2.1
+		// wants +sip.instance to be the device's IMEI URN. The modem attached to
+		// this worker has a real IMEI, and it is the device the network is actually
+		// serving, so use it rather than inventing an identity.
+		if strings.TrimSpace(startCtx.SIPInstanceURN) == "" {
+			if urn := voiceclient.FormatGSMAIMEIURN(w.getIMEI()); urn != "" {
+				startCtx.SIPInstanceURN = urn
+			}
+		}
 		logger.Info("VoWiFi 已启用手机 REGISTER 伪装画像",
 			"trace_id", traceID,
 			"device", deviceID,
 			"register_profile", regOpts.Profile.ContactFeatures,
 			"user_agent", regOpts.Profile.UserAgent,
-			"sip_instance", regOpts.SIPInstanceURN,
+			"sip_instance_kind", sipInstanceKind(startCtx.SIPInstanceURN),
 			"register_expires", int(regOpts.RegisterExpiry.Seconds()))
 	}
 	if pcscfOverride := carrier.ResolveIMSPcscfAddr(startProfile.MCC, startProfile.MNC); pcscfOverride != "" {

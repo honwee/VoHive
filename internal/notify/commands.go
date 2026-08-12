@@ -641,8 +641,14 @@ func (m *Manager) handleCmdCall(cmdCtx CommandContext, args []string) string {
 		return fmt.Sprintf("发起 VoWiFi 呼叫 / 失败\n设备    %s\n原因    设备未找到", deviceID)
 	}
 
-	voiceGW := m.pool.GetVoiceGateway()
-	if voiceGW == nil || voiceGW.GetAgent(deviceID) == nil {
+	// Readiness is the IMS session's business, not the voice gateway's. This used
+	// to gate on voiceGW.GetAgent(deviceID) != nil, and voicehost.Gateway is still
+	// a stub whose GetAgent always returns nil -- so /vocall could never reach our
+	// own stack at all. Every "已受理 / open_dialog_failed" reply seen so far came
+	// from the closed-source binary, which owns that error string; ours was being
+	// turned away at the door and the command looked like it was exercising code
+	// it never touched.
+	if !m.pool.IsVoWiFiActive(deviceID) {
 		return fmt.Sprintf("发起 VoWiFi 呼叫 / 失败\n设备    %s\n原因    VoWiFi 未就绪", deviceID)
 	}
 
@@ -660,32 +666,28 @@ func (m *Manager) handleCmdCall(cmdCtx CommandContext, args []string) string {
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		// hold + margin: SimulateVoWiFiCall holds an answered call for the full
+		// hold before hanging up, and a 60s ceiling used to cut a 60s hold off at
+		// the knees.
+		ctx, cancel := context.WithTimeout(context.Background(),
+			time.Duration(holdSeconds)*time.Second+90*time.Second)
 		defer cancel()
 
-		req := voicehost.SimulateCallRequest{
-			Callee:      callee,
-			HoldSeconds: holdSeconds,
-			OnConnected: func() {
-				cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 已接通\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒", displayName, caller, callee, holdSeconds))
-			},
-		}
-
-		res, err := voiceGW.SimulateCall(ctx, deviceID, req)
+		// Straight to the IMS session, the same entry point the HTTP route uses.
+		// voicehost.Gateway.SimulateCall is still the stub that answers
+		// "not implemented"; going through it meant this command could not have
+		// reported a real outcome even once the readiness gate was passed.
+		state, code, err := m.pool.SimulateVoWiFiCall(ctx, deviceID, callee,
+			time.Duration(holdSeconds)*time.Second)
 		if err != nil {
 			cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 失败\n设备    %s\n主叫    %s\n被叫    %s\n原因    %v", displayName, caller, callee, err))
 			return
 		}
-
-		if res.Success {
-			durationSeconds := res.DurationMs / 1000
-			if res.DurationMs > 0 && durationSeconds == 0 {
-				durationSeconds = 1
-			}
-			cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 完成\n设备    %s\n主叫    %s\n被叫    %s\n时长    %d 秒", displayName, caller, callee, durationSeconds))
-		} else {
-			cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 未接通\n设备    %s\n主叫    %s\n被叫    %s\n原因    %s", displayName, caller, callee, res.Reason))
+		if state == "answered" || state == "ended" {
+			cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 已接通\n设备    %s\n主叫    %s\n被叫    %s\n应答码  %d", displayName, caller, callee, code))
+			return
 		}
+		cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 未接通\n设备    %s\n主叫    %s\n被叫    %s\n状态    %s\n应答码  %d", displayName, caller, callee, state, code))
 	}()
 
 	return fmt.Sprintf("发起 VoWiFi 呼叫 / 已受理\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒", displayName, caller, callee, holdSeconds)
