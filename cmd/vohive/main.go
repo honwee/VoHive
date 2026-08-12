@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -270,6 +272,19 @@ func main() {
 				logger.Error("Registrar 初始化失败", "err", err)
 			} else {
 				voiceGW.SetClientAdapter(sipRegistrar)
+				// Media on the softphone side binds here. Without it the relay
+				// binds the wildcard address and the SDP we hand Linphone names
+				// 0.0.0.0, which it cannot send to.
+				if host, _, splitErr := net.SplitHostPort(cfg.VoWiFi.VoiceGateway.SIP.Listen); splitErr == nil {
+					if ip := net.ParseIP(strings.TrimSpace(host)); ip != nil && !ip.IsUnspecified() {
+						voiceGW.SetLANAddr(ip)
+					} else if lanIP := outboundLANIP(); lanIP != nil {
+						// "0.0.0.0:5060" says nothing about which address a
+						// softphone reaches us on; ask the routing table.
+						voiceGW.SetLANAddr(lanIP)
+					}
+				}
+				voiceGW.SetLogger(func(msg string, kv ...any) { logger.Info(msg, kv...) })
 
 				// 出呼优先走 VoWiFi；没有 IMS 腿时回退到 CS 域桥接。
 				// 这个分支原本长在 pool.SetSIPRegistrar 里，会在这之后把这里
@@ -456,4 +471,20 @@ func main() {
 	}
 
 	logger.Info("再见!")
+}
+
+// outboundLANIP reports the address this host reaches its LAN on. A UDP "dial"
+// allocates no packets and no socket state on the wire -- it just makes the
+// kernel pick a source address via the routing table, which is the only
+// authority on which of several interfaces a softphone will actually see.
+func outboundLANIP() net.IP {
+	conn, err := net.Dial("udp", "192.0.2.1:9")
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+	if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok && addr != nil {
+		return addr.IP
+	}
+	return nil
 }
